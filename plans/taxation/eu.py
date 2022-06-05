@@ -80,7 +80,7 @@ class EUTaxationPolicy(TaxationPolicy):
             # No vat id, no country
             return cls.get_default_tax()
 
-        elif not tax_id and country_code:
+        elif not tax_id:
             # Customer is not a company, we know his country
 
             if cls.is_in_EU(country_code):
@@ -103,16 +103,11 @@ class EUTaxationPolicy(TaxationPolicy):
                 # Company is from other EU country
                 try:
                     vies_result = vatnumber.check_vies(tax_id)
-                    logger.info("TAX_ID=%s RESULT=%s" % (tax_id, vies_result))
-                    if tax_id and vies_result:
-                        # Company is registered in VIES
-                        # Charge back
-                        return None
-                    else:
-                        return cls.EU_COUNTRIES_VAT[country_code]
+                    logger.info(f"TAX_ID={tax_id} RESULT={vies_result}")
+                    return None if tax_id and vies_result else cls.EU_COUNTRIES_VAT[country_code]
                 except (WebFault, TransportError, stdnum.exceptions.InvalidComponent):
                     # If we could not connect to VIES or the VAT ID is incorrect
-                    logger.exception("TAX_ID=%s" % (tax_id))
+                    logger.exception(f"TAX_ID={tax_id}")
                     return cls.EU_COUNTRIES_VAT[country_code]
             else:
                 # Company is not from EU

@@ -12,19 +12,16 @@ class PlanChangePolicy(object):
         selected_pricing = None
         for plan_pricing in plan_pricings:
             selected_pricing = plan_pricing
-            if plan_pricing.pricing.period <= period:
+            if selected_pricing.pricing.period <= period:
                 break
 
         if selected_pricing:
             return (selected_pricing.price / selected_pricing.pricing.period).quantize(Decimal('1.00'))
 
-        raise ValueError('Plan %s has no pricings.' % plan)
+        raise ValueError(f'Plan {plan} has no pricings.')
 
     def _calculate_final_price(self, period, day_cost_diff):
-        if day_cost_diff is None:
-            return None
-        else:
-            return period * day_cost_diff
+        return None if day_cost_diff is None else period * day_cost_diff
 
     def get_change_price(self, plan_old, plan_new, period):
         """
@@ -80,7 +77,4 @@ class StandardPlanChangePolicy(PlanChangePolicy):
         if day_cost_diff is None:
             return self.DOWNGRADE_CHARGE
         cost = (period * day_cost_diff * (self.UPGRADE_PERCENT_RATE/100 + 1) + self.UPGRADE_CHARGE).quantize(Decimal('1.00'))
-        if cost is None or cost < self.FREE_UPGRADE:
-            return None
-        else:
-            return cost
+        return None if cost is None or cost < self.FREE_UPGRADE else cost

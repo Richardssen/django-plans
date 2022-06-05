@@ -16,7 +16,10 @@ class UserLinkMixin(object):
         user_model = get_user_model()
         app_label = user_model._meta.app_label
         model_name = user_model._meta.model_name
-        change_url = reverse('admin:%s_%s_change' % (app_label, model_name), args=(obj.user.id,))
+        change_url = reverse(
+            f'admin:{app_label}_{model_name}_change', args=(obj.user.id,)
+        )
+
         return format_html('<a href="{}">{}</a>', change_url, obj.user.username)
 
     user_link.short_description = 'User'

@@ -8,4 +8,4 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):  # pragma: no cover
         userplans = UserPlan.create_for_users_without_plan()
-        self.stdout.write("%s user plans was created" % userplans.count())
+        self.stdout.write(f"{userplans.count()} user plans was created")

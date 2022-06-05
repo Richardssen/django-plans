@@ -104,10 +104,12 @@ class Plan(OrderedModel):
         return self.name
 
     def get_quota_dict(self):
-        quota_dic = {}
-        for plan_quota in PlanQuota.objects.filter(plan=self).select_related('quota'):
-            quota_dic[plan_quota.quota.codename] = plan_quota.value
-        return quota_dic
+        return {
+            plan_quota.quota.codename: plan_quota.value
+            for plan_quota in PlanQuota.objects.filter(plan=self).select_related(
+                'quota'
+            )
+        }
 
 
 class BillingInfo(models.Model):
@@ -142,24 +144,22 @@ class BillingInfo(models.Model):
     @staticmethod
     def clean_tax_number(tax_number, country):
         tax_number = re.sub(r'[^A-Z0-9]', '', tax_number.upper())
-        if tax_number and country:
-
-            if country in vatnumber.countries():
-                number = tax_number
-                if tax_number.startswith(country):
-                    number = tax_number[len(country):]
-
-                if not vatnumber.check_vat(country + number):
-                    #           This is a proper solution to bind ValidationError to a Field but it is not
-                    #           working due to django bug :(
-                    #                    errors = defaultdict(list)
-                    #                    errors['tax_number'].append(_('VAT ID is not correct'))
-                    #                    raise ValidationError(errors)
-                    raise ValidationError(_('VAT ID is not correct'))
-
-            return tax_number
-        else:
+        if not tax_number or not country:
             return ''
+        if country in vatnumber.countries():
+            number = tax_number
+            if tax_number.startswith(country):
+                number = tax_number[len(country):]
+
+            if not vatnumber.check_vat(country + number):
+                #           This is a proper solution to bind ValidationError to a Field but it is not
+                #           working due to django bug :(
+                #                    errors = defaultdict(list)
+                #                    errors['tax_number'].append(_('VAT ID is not correct'))
+                #                    raise ValidationError(errors)
+                raise ValidationError(_('VAT ID is not correct'))
+
+        return tax_number
 
 
 # FIXME: How to make validation in Model clean and attach it to a field? Seems that it is not working right now
@@ -186,22 +186,16 @@ class UserPlan(models.Model):
         verbose_name_plural = _("Users plans")
 
     def __str__(self):
-        return "%s [%s]" % (self.user, self.plan)
+        return f"{self.user} [{self.plan}]"
 
     def is_active(self):
         return self.active
 
     def is_expired(self):
-        if self.expire is None:
-            return False
-        else:
-            return self.expire < date.today()
+        return False if self.expire is None else self.expire < date.today()
 
     def days_left(self):
-        if self.expire is None:
-            return None
-        else:
-            return (self.expire - date.today()).days
+        return None if self.expire is None else (self.expire - date.today()).days
 
     def clean_activation(self):
         errors = plan_validation(self.user)
@@ -266,20 +260,17 @@ class UserPlan(models.Model):
                 else:
                     self.expire = date.today() + timedelta(days=pricing.period)
 
+            elif self.expire is None:
+                status = True
+            elif self.expire > date.today():
+                status = False
+                accounts_logger.warning("Account '%s' [id=%d] plan NOT changed to '%s' [id=%d]" % (
+                    self.user, self.user.pk, plan, plan.pk))
             else:
-                # This should not ever happen (as this case should be managed by plan change request)
-                # but just in case we consider a case when user has a different plan
-                if self.expire is None:
-                    status = True
-                elif self.expire > date.today():
-                    status = False
-                    accounts_logger.warning("Account '%s' [id=%d] plan NOT changed to '%s' [id=%d]" % (
-                        self.user, self.user.pk, plan, plan.pk))
-                else:
-                    status = True
-                    account_change_plan.send(sender=self, user=self.user)
-                    self.plan = plan
-                    self.expire = date.today() + timedelta(days=pricing.period)
+                status = True
+                account_change_plan.send(sender=self, user=self.user)
+                self.plan = plan
+                self.expire = date.today() + timedelta(days=pricing.period)
 
             if status:
                 self.save()
@@ -358,7 +349,7 @@ class Pricing(models.Model):
         verbose_name_plural = _("Pricings")
 
     def __str__(self):
-        return "%s (%d " % (self.name, self.period) + "%s)" % _("days")
+        return "%s (%d " % (self.name, self.period) + f'{_("days")})'
 
 
 @python_2_unicode_compatible
@@ -381,7 +372,7 @@ class Quota(OrderedModel):
         verbose_name_plural = _("Quotas")
 
     def __str__(self):
-        return "%s" % (self.codename, )
+        return f"{self.codename}"
 
 
 class PlanPricingManager(models.Manager):
@@ -403,7 +394,7 @@ class PlanPricing(models.Model):
         verbose_name_plural = _("Plans pricings")
 
     def __str__(self):
-        return "%s %s" % (self.plan.name, self.pricing)
+        return f"{self.plan.name} {self.pricing}"
 
 
 class PlanQuotaManager(models.Manager):
@@ -489,34 +480,29 @@ class Order(models.Model):
         Flat names are only introduced for legacy system support, when you need to migrate old orders into
         django-plans and you cannot match Plan&Pricings convention.
         """
-        if self.flat_name:
-            return self.flat_name
-        else:
-            return "%s %s %s " % (
-                _('Plan'), self.plan.name, "(upgrade)" if self.pricing is None else '- %s' % self.pricing)
+        return (
+            self.flat_name
+            or f"""{_('Plan')} {self.plan.name} {"(upgrade)" if self.pricing is None else f'- {self.pricing}'} """
+        )
 
     def is_ready_for_payment(self):
         return self.status == self.STATUS.NEW and (now() - self.created).days < getattr(
             settings, 'PLANS_ORDER_EXPIRATION', 14)
 
     def complete_order(self):
-        if self.completed is None:
-            if self.user.userplan.expire and self.user.userplan.expire > date.today():
-                self.plan_extended_from = self.user.userplan.expire
-            else:
-                self.plan_extended_from = date.today()
-            status = self.user.userplan.extend_account(self.plan, self.pricing)
-            self.plan_extended_until = self.user.userplan.expire
-            self.completed = now()
-            if status:
-                self.status = Order.STATUS.COMPLETED
-            else:
-                self.status = Order.STATUS.NOT_VALID
-            self.save()
-            order_completed.send(self)
-            return True
-        else:
+        if self.completed is not None:
             return False
+        if self.user.userplan.expire and self.user.userplan.expire > date.today():
+            self.plan_extended_from = self.user.userplan.expire
+        else:
+            self.plan_extended_from = date.today()
+        status = self.user.userplan.extend_account(self.plan, self.pricing)
+        self.plan_extended_until = self.user.userplan.expire
+        self.completed = now()
+        self.status = Order.STATUS.COMPLETED if status else Order.STATUS.NOT_VALID
+        self.save()
+        order_completed.send(self)
+        return True
 
     def get_invoices_proforma(self):
         return Invoice.proforma.filter(order=self)
@@ -528,10 +514,7 @@ class Order(models.Model):
         return self.invoice_set.order_by('issued', 'issued_duplicate', 'pk')
 
     def tax_total(self):
-        if self.tax is None:
-            return Decimal('0.00')
-        else:
-            return self.total() - self.amount
+        return Decimal('0.00') if self.tax is None else self.total() - self.amount
 
     def total(self):
         if self.tax is not None:
@@ -748,8 +731,7 @@ class Invoice(models.Model):
         self.tax = order.tax
         self.currency = order.currency
         if Site is not None:
-            self.item_description = "%s - %s" % (
-                Site.objects.get_current().name, order.name)
+            self.item_description = f"{Site.objects.get_current().name} - {order.name}"
         else:
             self.item_description = order.name
 

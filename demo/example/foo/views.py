@@ -41,9 +41,8 @@ class FooDeleteView(DeleteView):
         return reverse('foo_list')
 
     def delete(self, request, *args, **kwargs):
-        if not get_user_quota(request.user).get('CAN_DELETE_FOO', True):
-            messages.error(request, 'Sorry, your plan does not allow to deletes Foo. Please upgrade!')
-            return redirect('foo_del', pk=self.get_object().pk)
-        else:
+        if get_user_quota(request.user).get('CAN_DELETE_FOO', True):
             return super(FooDeleteView, self).delete(request, *args, **kwargs)
+        messages.error(request, 'Sorry, your plan does not allow to deletes Foo. Please upgrade!')
+        return redirect('foo_del', pk=self.get_object().pk)
 
